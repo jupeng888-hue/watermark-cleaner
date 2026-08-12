@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """水印检测：定位「产品之外」的文字水印。
-- 产品主体：OpenCV 显著性检测 + GrabCut 细化（白底电商图效果好，零模型）
+- 产品主体：背景色距离 + GrabCut 细化（白底电商图效果好，零模型）
 - 文字水印：优先 Tesseract OCR（装了就用），否则 MSER 笔画启发式
 - 最终水印蒙版 = 文字区域 - 产品区域（膨胀后），保护产品不被误擦
 """
@@ -12,7 +12,7 @@ import numpy as np
 def product_mask(img_bgr):
     """返回产品主体蒙版（255=产品）。白底/纯色底产品图适用。"""
     h, w = img_bgr.shape[:2]
-    # 背景色估计：取四角中位色，距离背景色远的像素视为前景（白底/纯色底产品图适用）
+    # 背景色估计：取四角中位色，距离背景色远的像素视为前景
     c = 20
     corners = np.concatenate([
         img_bgr[:c, :c].reshape(-1, 3), img_bgr[:c, -c:].reshape(-1, 3),
@@ -61,7 +61,7 @@ def _text_boxes_tesseract(img_bgr):
 def _text_boxes_mser(img_bgr):
     """无 tesseract 时的笔画启发式文字区域检测。"""
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    mser = cv2.MSER_create(_min_area=30, _max_area=8000)
+    mser = cv2.MSER_create(min_area=30, max_area=8000)
     regions, _ = mser.detectRegions(gray)
     mask = np.zeros_like(gray)
     for r in regions:
@@ -79,7 +79,7 @@ def _text_boxes_mser(img_bgr):
 def detect_watermark_mask(img_bgr, extra_boxes=None, protect_product=True):
     """返回 (mask, boxes)。mask 255=建议擦除的水印区域（已排除产品）。"""
     h, w = img_bgr.shape[:2]
-    boxes = _text_boxes_tesseract(img_bgr) if shutil.which("tesseract") or True else None
+    boxes = _text_boxes_tesseract(img_bgr)
     if not boxes:
         boxes = _text_boxes_mser(img_bgr)
 
@@ -92,7 +92,7 @@ def detect_watermark_mask(img_bgr, extra_boxes=None, protect_product=True):
         pm = cv2.dilate(product_mask(img_bgr), np.ones((15, 15), np.uint8), iterations=2)
         text_mask = cv2.bitwise_and(text_mask, cv2.bitwise_not(pm))
 
-    if extra_boxes:  # 用户手动框选区域（强制纳入，不受产品保护限制时由 GUI 传入开关）
+    if extra_boxes:  # 用户手动框选区域
         for (x0, y0, x1, y1) in extra_boxes:
             cv2.rectangle(text_mask, (x0, y0), (x1, y1), 255, -1)
     return text_mask, boxes
