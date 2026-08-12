@@ -16,10 +16,13 @@ def _get_session():
         return _session
     if not model_manager.lama_available():
         return None
-    import onnxruntime as ort
-    providers = ["CUDAExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"]
-    providers = [p for p in providers if p in ort.get_available_providers()] or ["CPUExecutionProvider"]
-    _session = ort.InferenceSession(model_manager.lama_path(), providers=providers)
+    try:
+        import onnxruntime as ort
+        providers = ["CUDAExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"]
+        providers = [p for p in providers if p in ort.get_available_providers()] or ["CPUExecutionProvider"]
+        _session = ort.InferenceSession(model_manager.lama_path(), providers=providers)
+    except Exception:
+        _session = None  # 模型损坏/加载失败时降级 OpenCV，不让整张图失败
     return _session
 
 
