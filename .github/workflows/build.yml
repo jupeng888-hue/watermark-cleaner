@@ -1,0 +1,38 @@
+name: 测试与打包
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Windows 自动化测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        run: pip install -r requirements.txt pytest
+      - name: 运行全部测试
+        run: pytest tests -v
+
+  build:
+    name: 打包 Windows exe
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖与打包器
+        run: pip install -r requirements.txt pyinstaller
+      - name: PyInstaller 打包
+        run: pyinstaller --noconfirm --onefile --windowed --name WatermarkCleaner app/main.py
+      - name: 上传 exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: WatermarkCleaner-exe
+          path: dist/WatermarkCleaner.exe
