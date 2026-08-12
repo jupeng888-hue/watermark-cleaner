@@ -63,8 +63,9 @@ def test_run_batch_cancel_dialog_shows_status(win, monkeypatch):
 
 def test_full_batch_flow(win, monkeypatch, tmp_path):
     """模拟真实使用：加图 → 选输出目录 → 后台线程处理 → 产出文件。"""
+    from core import pipeline
     img_path = str(tmp_path / "产品图.jpg")
-    assert __import__("core.pipeline", fromlist=["pipeline"]).imwrite_unicode(img_path, _sample_image())
+    assert pipeline.imwrite_unicode(img_path, _sample_image())
     out_dir = str(tmp_path / "out")
 
     monkeypatch.setattr(QFileDialog, "getOpenFileNames",
@@ -84,8 +85,7 @@ def test_full_batch_flow(win, monkeypatch, tmp_path):
     QApplication.processEvents()
     assert win.btn_run.isEnabled()       # 完成后恢复
 
-        outputs = [f for f in os.listdir(out_dir) if f.endswith("_clean.jpg")]
+    outputs = [f for f in os.listdir(out_dir) if f.endswith("_clean.jpg")]
     assert len(outputs) == 1             # 结果文件真实产出
-    pipeline = __import__("core.pipeline", fromlist=["pipeline"])
     result = pipeline.imread_unicode(os.path.join(out_dir, outputs[0]))
     assert result is not None and result.shape == (600, 800, 3)
