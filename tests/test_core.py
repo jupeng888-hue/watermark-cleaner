@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""核心流水线自动化测试：用合成图验证 检测/去水印/盖条/批量 全流程。
-不依赖 LaMa 模型（未下载时自动走 OpenCV 兜底），不依赖网络，可在 CI 直接跑。"""
+"""核心流水线自动化测试：用合成图验证 检测/去水印/盖条/批量 全流程。"""
 import os
 import sys
 
@@ -15,7 +14,6 @@ from core import detect, inpaint, cover, pipeline  # noqa: E402
 
 @pytest.fixture(scope="module")
 def sample():
-    """合成图：浅色底 + 居中产品 + 产品外水印 + 产品上标志。"""
     img = np.full((800, 1000, 3), 245, np.uint8)
     rng = np.random.default_rng(7)
     for _ in range(30):
@@ -33,10 +31,10 @@ def test_product_mask_covers_product(sample):
     img, _ = sample
     pm = detect.product_mask(img)
     assert pm is not None and pm.shape == img.shape[:2]
-    assert pm[420, 500] == 255          # 产品中心必须在蒙版内
-    assert pm[50, 50] == 0              # 空白背景不在蒙版内
+    assert pm[420, 500] == 255
+    assert pm[50, 50] == 0
     ratio = cv2.countNonZero(pm) / pm.size
-    assert 0.02 < ratio < 0.6           # 面积合理
+    assert 0.02 < ratio < 0.6
 
 
 def test_watermark_mask_excludes_product(sample):
@@ -47,7 +45,7 @@ def test_watermark_mask_excludes_product(sample):
     assert cv2.countNonZero(mask) > 0
     pm = detect.product_mask(img)
     overlap = cv2.countNonZero(cv2.bitwise_and(mask, pm))
-    assert overlap == 0                 # 水印蒙版不得侵入产品
+    assert overlap == 0
 
 
 def test_inpaint_removes_watermark(sample):
@@ -58,7 +56,7 @@ def test_inpaint_removes_watermark(sample):
     assert out.shape == img.shape
     before = img[690:725, 80:465].std()
     after = out[690:725, 80:465].std()
-    assert after < before               # 文字的高频纹理被抹平
+    assert after < before
 
 
 def test_inpaint_empty_mask_passthrough(sample):
@@ -75,7 +73,7 @@ def test_logo_match_and_strip(sample):
     assert abs(x - 425) < 20 and abs(y - 410) < 20
     out = cover.draw_white_strip(img, boxes[0], text="your logo here")
     strip_region = out[y:y + h, x:x + w]
-    assert strip_region.mean() > 200    # 覆盖后该区域整体变为白底条
+    assert strip_region.mean() > 200
 
 
 def test_batch_pipeline(sample, tmp_path):
@@ -84,8 +82,8 @@ def test_batch_pipeline(sample, tmp_path):
     in_dir.mkdir()
     paths = []
     for i in range(2):
-        p = in_dir / f"图{i}.jpg"
-        cv2.imwrite(str(p), img)
+        p = in_dir / f"tu{i}.jpg"
+        assert pipeline.imwrite_unicode(str(p), img)
         paths.append(str(p))
     opts = {"remove_watermark": True, "protect_product": True,
             "strip_enabled": True, "strip_text": "your logo here",
