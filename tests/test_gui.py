@@ -84,7 +84,8 @@ def test_full_batch_flow(win, monkeypatch, tmp_path):
     QApplication.processEvents()
     assert win.btn_run.isEnabled()       # 完成后恢复
 
-    outputs = [f for f in os.listdir(out_dir) if f.endswith("_clean.jpg")]
+        outputs = [f for f in os.listdir(out_dir) if f.endswith("_clean.jpg")]
     assert len(outputs) == 1             # 结果文件真实产出
-    result = cv2.imread(os.path.join(out_dir, outputs[0]))
+    pipeline = __import__("core.pipeline", fromlist=["pipeline"])
+    result = pipeline.imread_unicode(os.path.join(out_dir, outputs[0]))
     assert result is not None and result.shape == (600, 800, 3)
