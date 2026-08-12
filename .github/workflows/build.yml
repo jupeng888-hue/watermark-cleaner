@@ -2,7 +2,11 @@ name: 测试与打包
 
 on:
   push:
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   test:
@@ -31,8 +35,11 @@ jobs:
         run: pip install -r requirements.txt pyinstaller
       - name: PyInstaller 打包
         run: pyinstaller --noconfirm --onefile --windowed --name WatermarkCleaner app/main.py
-      - name: 上传 exe
-        uses: actions/upload-artifact@v4
+      - name: 自动发布到 Releases
+        uses: softprops/action-gh-release@v2
         with:
-          name: WatermarkCleaner-exe
-          path: dist/WatermarkCleaner.exe
+          tag_name: latest
+          name: 最新构建版
+          body: 每次代码更新后自动构建。测试全部通过才会出现在这里。
+          files: dist/WatermarkCleaner.exe
+          prerelease: true
