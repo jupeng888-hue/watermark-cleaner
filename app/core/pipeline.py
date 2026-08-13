@@ -23,7 +23,7 @@ def imwrite_unicode(path, img):
 
 def process_image(img_bgr, opts):
     """opts: dict(remove_watermark, extra_boxes, protect_product,
-                 logo_template, logo_boxes, strip_text, strip_enabled, png)"""
+                 logo_template, logo_boxes, strip_text, strip_enabled)"""
     out = img_bgr
     info = {"watermark_boxes": []}
 
@@ -34,10 +34,14 @@ def process_image(img_bgr, opts):
         info["watermark_boxes"] = boxes
         out = inpaint.inpaint(out, mask)
 
-    if opts.get("strip_enabled") and (opts.get("logo_template") is not None or opts.get("logo_boxes")):
+    if opts.get("strip_enabled"):
         logo_boxes = list(opts.get("logo_boxes") or [])
         if opts.get("logo_template") is not None:
             logo_boxes += cover.find_logo_boxes(out, opts["logo_template"])
+        if not logo_boxes:
+            # 无模板时：自动识别产品内部的高对比印刷标志（字母/图形聚类）
+            pm = detect.product_mask(out)
+            logo_boxes += detect.logo_boxes_auto(out, pm)
         seen = []
         for b in logo_boxes:
             if not any(abs(b[0] - s[0]) < 10 and abs(b[1] - s[1]) < 10 for s in seen):
