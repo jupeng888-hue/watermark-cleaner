@@ -152,11 +152,13 @@ class MainWindow(QMainWindow):
         self.ck_remove = QCheckBox("去除产品外的水印（自动检测）"); self.ck_remove.setChecked(True)
         self.ck_protect = QCheckBox("保护产品主体不被误擦"); self.ck_protect.setChecked(True)
         self.ck_strip = QCheckBox("产品上敏感标志盖白底条")
+        self.ck_png = QCheckBox("无损 PNG 导出（文件更大，画质零损失）")
         self.strip_text = QLineEdit("your logo here")
         btn_tpl = QPushButton("选择敏感标志模板图（logo 小图）")
         btn_tpl.clicked.connect(self.pick_template)
         ov.addWidget(self.ck_remove); ov.addWidget(self.ck_protect)
         ov.addWidget(self.ck_strip); ov.addWidget(self.strip_text); ov.addWidget(btn_tpl)
+        ov.addWidget(self.ck_png)
         lv.addWidget(opt)
 
         self.progress = QProgressBar()
@@ -245,6 +247,7 @@ class MainWindow(QMainWindow):
             "strip_enabled": self.ck_strip.isChecked(),
             "strip_text": self.strip_text.text() or "your logo here",
             "logo_template": self.template,
+            "png": self.ck_png.isChecked(),
             "extra_boxes": manual_boxes if self.ck_remove.isChecked() else None,
             "logo_boxes": manual_boxes if (self.ck_strip.isChecked() and not self.ck_remove.isChecked()) else None,
         }
