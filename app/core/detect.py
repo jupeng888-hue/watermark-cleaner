@@ -1,45 +1,67 @@
 # -*- coding: utf-8 -*-
 """水印检测：定位「产品之外」的文字水印。
-- 产品主体：背景色距离 + GrabCut 细化（白底电商图效果好，零模型）
-- 文字水印：优先 Tesseract OCR（装了就用），否则 MSER 笔画启发式
-- 最终水印蒙版 = 文字区域 - 产品区域（膨胀后），保护产品不被误擦
+- 文字检测：局部背景差分法（平滑背景上任意颜色文字均有效），装有 Tesseract 时 OCR 补充
+- 产品主体：双路分割（局部差分 + 四角色差），框级+像素级双重保护产品不被误擦
 """
-import shutil
 import cv2
 import numpy as np
 
 
+def _local_diff(img_bgr, ksize=51):
+    """每个像素与局部背景（大核中值）的最大通道差。背景渐变不影响。"""
+    bg = cv2.medianBlur(img_bgr, ksize)
+    return np.abs(img_bgr.astype(np.int16) - bg.astype(np.int16)).max(axis=2).astype(np.uint8)
+
+
+def _largest_component(fg, h, w, min_ratio=0.03, max_ratio=0.90):
+    """前景二值图 → 最大连通体（填小洞）。面积不合理返回 None。"""
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(fg, 8)
+    if num <= 1:
+        return None
+    biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    area = stats[biggest, cv2.CC_STAT_AREA]
+    if not (min_ratio * h * w <= area <= max_ratio * h * w):
+        return None
+    sub = np.where(labels == biggest, 255, 0).astype(np.uint8)
+    sub = cv2.morphologyEx(sub, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+    # 填充内部小空洞（大面积纯色产品中心与局部背景同色会漏成洞）；
+    # 只填小洞，避免吞掉被产品包围的大片背景（如双臂/杯间空隙、上方标题区）
+    inv = cv2.bitwise_not(sub)
+    ff = inv.copy()
+    ff_mask = np.zeros((h + 2, w + 2), np.uint8)
+    cv2.floodFill(ff, ff_mask, (0, 0), 128)
+    holes = (ff == 255).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(holes, 8)
+    for i in range(1, n):
+        if st[i, cv2.CC_STAT_AREA] <= 0.05 * h * w:
+            sub[lab == i] = 255
+    return sub
+
+
 def product_mask(img_bgr):
-    """返回产品主体蒙版（255=产品）。白底/纯色底产品图适用。"""
+    """产品主体蒙版（255=产品）。
+    双路互补：局部差分适合有纹理/渐变背景；四角背景色差适合纯色平涂图。"""
     h, w = img_bgr.shape[:2]
-    # 背景色估计：取四角中位色，距离背景色远的像素视为前景
+
+    # 路径 A：局部背景差分（真实照片优先）
+    diff = _local_diff(img_bgr)
+    fg_a = cv2.morphologyEx((diff > 40).astype(np.uint8), cv2.MORPH_CLOSE, np.ones((31, 31), np.uint8))
+    sub = _largest_component(fg_a, h, w)
+    if sub is not None:
+        return sub
+
+    # 路径 B：四角中位色距离（纯色平涂图兜底）
     c = 20
     corners = np.concatenate([
         img_bgr[:c, :c].reshape(-1, 3), img_bgr[:c, -c:].reshape(-1, 3),
         img_bgr[-c:, :c].reshape(-1, 3), img_bgr[-c:, -c:].reshape(-1, 3)])
     bg = np.median(corners, axis=0)
     dist = np.linalg.norm(img_bgr.astype(np.float32) - bg, axis=2)
-    seed = (dist > 30).astype(np.uint8)
-    seed = cv2.morphologyEx(seed, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-    seed = cv2.morphologyEx(seed, cv2.MORPH_CLOSE, np.ones((25, 25), np.uint8))
-    # 取最大连通域作为 GrabCut 初始前景
-    num, labels, stats, _ = cv2.connectedComponentsWithStats(seed, 8)
-    if num <= 1:
-        return np.zeros((h, w), np.uint8)
-    biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    if stats[biggest, cv2.CC_STAT_AREA] < 0.01 * h * w:
-        return np.zeros((h, w), np.uint8)  # 前景太小，认为没有明显产品
-    seed = (labels == biggest).astype(np.uint8)
-    x, y, bw, bh = stats[biggest, 0], stats[biggest, 1], stats[biggest, 2], stats[biggest, 3]
-    rect = (max(0, x - 10), max(0, y - 10), min(w, bw + 20), min(h, bh + 20))
-    gc_mask = np.where(seed > 0, cv2.GC_PR_FGD, cv2.GC_PR_BGD).astype(np.uint8)
-    bgd, fgd = np.zeros((1, 65), np.float64), np.zeros((1, 65), np.float64)
-    try:
-        cv2.grabCut(img_bgr, gc_mask, rect, bgd, fgd, 3, cv2.GC_INIT_WITH_MASK)
-        out = np.where((gc_mask == cv2.GC_FGD) | (gc_mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
-    except cv2.error:
-        out = seed * 255
-    return cv2.morphologyEx(out, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    fg_b = cv2.morphologyEx((dist > 30).astype(np.uint8), cv2.MORPH_CLOSE, np.ones((25, 25), np.uint8))
+    sub = _largest_component(fg_b, h, w)
+    if sub is not None:
+        return sub
+    return np.zeros((h, w), np.uint8)
 
 
 def _text_boxes_tesseract(img_bgr):
@@ -58,20 +80,18 @@ def _text_boxes_tesseract(img_bgr):
         return None  # 未安装 tesseract
 
 
-def _text_boxes_mser(img_bgr):
-    """无 tesseract 时的笔画启发式文字区域检测。"""
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    mser = cv2.MSER_create(min_area=30, max_area=8000)
-    regions, _ = mser.detectRegions(gray)
-    mask = np.zeros_like(gray)
-    for r in regions:
-        cv2.fillConvexPoly(mask, r, 255)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((15, 5), np.uint8))
-    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+def _text_boxes_diff(img_bgr):
+    """局部差分文字行检测：真实电商图实测有效（红字/灰字/半透明字均可）。"""
+    H, W = img_bgr.shape[:2]
+    diff = _local_diff(img_bgr)
+    _, bw = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
+    bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, np.ones((9, 25), np.uint8))  # 横向合并成文字行
+    cnts, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     boxes = []
     for c in cnts:
         x, y, w, h = cv2.boundingRect(c)
-        if w >= 12 and 4 <= h <= 200 and w / max(h, 1) > 0.8:
+        if 10 <= h <= 0.25 * H and w >= 1.5 * h and w * h >= 200:
             boxes.append((x, y, w, h))
     return boxes
 
@@ -79,18 +99,27 @@ def _text_boxes_mser(img_bgr):
 def detect_watermark_mask(img_bgr, extra_boxes=None, protect_product=True):
     """返回 (mask, boxes)。mask 255=建议擦除的水印区域（已排除产品）。"""
     h, w = img_bgr.shape[:2]
-    boxes = _text_boxes_tesseract(img_bgr)
-    if not boxes:
-        boxes = _text_boxes_mser(img_bgr)
+    # 差分法（主线，实测最稳）+ Tesseract（若安装）取并集，重叠框去重
+    boxes = _text_boxes_diff(img_bgr)
+    for tb in (_text_boxes_tesseract(img_bgr) or []):
+        tx, ty, tw, th = tb
+        dup = any(abs(tx - x) < 15 and abs(ty - y) < 15 for x, y, _, _ in boxes)
+        if not dup:
+            boxes.append(tb)
 
     text_mask = np.zeros((h, w), np.uint8)
+    pm = product_mask(img_bgr) if protect_product else np.zeros((h, w), np.uint8)
+    pm_d = cv2.dilate(pm, np.ones((7, 7), np.uint8))
     for (x, y, bw, bh) in boxes:
+        box_area = bw * bh
+        overlap = cv2.countNonZero(pm_d[y:y + bh, x:x + bw])
+        if protect_product and box_area > 0 and overlap / box_area > 0.5:
+            continue  # 框大部分在产品上 = 产品自身的印刷/标志，保护不擦
         cv2.rectangle(text_mask, (x, y), (x + bw, y + bh), 255, -1)
     text_mask = cv2.dilate(text_mask, np.ones((5, 5), np.uint8))
-
     if protect_product:
-        pm = cv2.dilate(product_mask(img_bgr), np.ones((15, 15), np.uint8), iterations=2)
-        text_mask = cv2.bitwise_and(text_mask, cv2.bitwise_not(pm))
+        # 像素级再扣一次：跨背景的检测框边缘可能扫到产品轮廓
+        text_mask = cv2.bitwise_and(text_mask, cv2.bitwise_not(pm_d))
 
     if extra_boxes:  # 用户手动框选区域
         for (x0, y0, x1, y1) in extra_boxes:
