@@ -23,7 +23,7 @@ def imwrite_unicode(path, img):
 
 def process_image(img_bgr, opts):
     """opts: dict(remove_watermark, extra_boxes, protect_product,
-                 logo_template, logo_boxes, strip_text, strip_enabled)"""
+                 logo_template, logo_boxes, strip_text, strip_enabled, png)"""
     out = img_bgr
     info = {"watermark_boxes": []}
 
@@ -49,6 +49,7 @@ def process_image(img_bgr, opts):
 
 def process_batch(paths, out_dir, opts, progress_cb=None):
     os.makedirs(out_dir, exist_ok=True)
+    ext = ".png" if opts.get("png") else ".jpg"  # PNG=无损导出
     results = []
     for i, p in enumerate(paths):
         try:
@@ -56,7 +57,7 @@ def process_batch(paths, out_dir, opts, progress_cb=None):
             if img is None:
                 raise ValueError("图片解码失败")
             out, info = process_image(img, opts)
-            dst = os.path.join(out_dir, os.path.splitext(os.path.basename(p))[0] + "_clean.jpg")
+            dst = os.path.join(out_dir, os.path.splitext(os.path.basename(p))[0] + "_clean" + ext)
             imwrite_unicode(dst, out)
             results.append((p, dst, None, info))
         except Exception as e:
