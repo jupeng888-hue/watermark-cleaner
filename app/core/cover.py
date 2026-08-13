@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""白底条覆盖：在产品上的敏感标志位置盖白底圆角条 + "your logo here"。
-敏感标志定位：用户提供 Logo 模板图做模板匹配（多尺度），或手动框选。"""
+"""白底条覆盖：在产品上的敏感标志位置盖白底条 + "your logo here"。
+敏感标志定位：用户提供 Logo 模板图做模板匹配（多尺度 + NMS），或手动框选。
+竖版标志（如竖排文字 logo）自动旋转文字。"""
 import cv2
 import numpy as np
 
@@ -22,7 +23,6 @@ def find_logo_boxes(img_bgr, template_bgr, threshold=0.72, scales=None):
         h2, w2 = rs.shape
         for x, y in zip(xs, ys):
             rects.append([int(x), int(y), w2, h2, float(res[y, x])])
-    # NMS 去重
     if not rects:
         return []
     boxes = np.array([[x, y, x + w, y + h] for x, y, w, h, _ in rects], np.float32)
@@ -33,38 +33,32 @@ def find_logo_boxes(img_bgr, template_bgr, threshold=0.72, scales=None):
 
 
 def draw_white_strip(img_bgr, box, text="your logo here", pad_ratio=0.35):
-    """在 box 处绘制白底圆角条 + 灰色文字。"""
+    """在 box 处绘制白底条 + 灰色文字；竖版区域自动旋转文字。"""
     out = img_bgr.copy()
     x, y, w, h = [int(v) for v in box[:4]]
     pw, ph = int(w * pad_ratio), int(h * pad_ratio)
     x0, y0 = max(0, x - pw), max(0, y - ph)
     x1, y1 = min(out.shape[1], x + w + pw), min(out.shape[0], y + h + ph)
     bw, bh = x1 - x0, y1 - y0
-    radius = max(4, bh // 6)
     cv2.rectangle(out, (x0, y0), (x1, y1), (255, 255, 255), -1)
-    # 圆角化四角
-    overlay = out.copy()
-    cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 0, 0), -1)
-    corners = np.zeros_like(out)
-    cv2.rectangle(corners, (x0, y0), (x1, y1), (255, 255, 255), -1)
-    mask = np.zeros(out.shape[:2], np.uint8)
-    cv2.rectangle(mask, (x0 + radius, y0), (x1 - radius, y1), 255, -1)
-    cv2.rectangle(mask, (x0, y0 + radius), (x1, y1 - radius), 255, -1)
-    for cx, cy in [(x0 + radius, y0 + radius), (x1 - radius, y0 + radius),
-                   (x0 + radius, y1 - radius), (x1 - radius, y1 - radius)]:
-        cv2.circle(mask, (cx, cy), radius, 255, -1)
-    region = out[y0:y1, x0:x1]
-    m3 = (mask[y0:y1, x0:x1] > 0)[:, :, None]
-    white = np.full_like(region, 255)
-    out[y0:y1, x0:x1] = np.where(m3, white, region)
-    # 文字自适应大小
-    scale = 0.5
-    for _ in range(20):
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
-        if tw <= bw * 0.85 and th <= bh * 0.5:
+
+    vertical = bh > bw * 1.3
+    tw_max, th_max = (bh, bw) if vertical else (bw, bh)
+    scale = 1.0
+    for _ in range(30):
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+        if tw <= tw_max * 0.9 and th <= th_max * 0.6:
             break
         scale *= 0.9
-    tx = x0 + (bw - tw) // 2
-    ty = y0 + (bh + th) // 2
-    cv2.putText(out, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, scale, (150, 150, 150), 1, cv2.LINE_AA)
+    pad = 10
+    txt_img = np.full((th + 2 * pad, tw + 2 * pad, 3), 255, np.uint8)
+    cv2.putText(txt_img, text, (pad, th + pad // 2), cv2.FONT_HERSHEY_SIMPLEX,
+                scale, (150, 150, 150), 2, cv2.LINE_AA)
+    if vertical:
+        txt_img = cv2.rotate(txt_img, cv2.ROTATE_90_CLOCKWISE)
+    th2, tw2 = txt_img.shape[:2]
+    ty = y0 + max(0, (bh - th2) // 2)
+    tx = x0 + max(0, (bw - tw2) // 2)
+    ey, ex = min(ty + th2, y1), min(tx + tw2, x1)
+    out[ty:ey, tx:ex] = txt_img[:ey - ty, :ex - tx]
     return out
