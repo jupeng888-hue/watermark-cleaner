@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """水印检测：定位「产品之外」的文字水印。
 - 文字检测：局部背景差分法（平滑背景上任意颜色文字均有效），装有 Tesseract 时 OCR 补充
-- 产品主体：双路分割（局部差分 + 四角色差），框级+像素级双重保护产品不被误擦
+- 产品主体：双路分割（局部差分 + 四角色差），框级+像素级双重保护，25px 安全带
 """
 import cv2
 import numpy as np
@@ -109,7 +109,9 @@ def detect_watermark_mask(img_bgr, extra_boxes=None, protect_product=True):
 
     text_mask = np.zeros((h, w), np.uint8)
     pm = product_mask(img_bgr) if protect_product else np.zeros((h, w), np.uint8)
-    pm_d = cv2.dilate(pm, np.ones((7, 7), np.uint8))
+    # 25px 安全带：浅色/低对比产品的边缘分割可能漏几像素，宁可留白不可伤图
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (51, 51))
+    pm_d = cv2.dilate(pm, k)
     for (x, y, bw, bh) in boxes:
         box_area = bw * bh
         overlap = cv2.countNonZero(pm_d[y:y + bh, x:x + bw])
