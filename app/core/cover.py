@@ -91,7 +91,7 @@ def strip_frame_from_product(pts, pm, pad=8):
     方向取整只杯子连通体的行中心轴线（条的横轴与杯底平行，防错清单 #27）——
     必须取 logo 所在的整只产品连通体：只截标志附近的小区域会量出"竖直"，
     而杯子的真实刚体倾斜（实测 ±3° 左右）就丢了，用户一眼看出条歪；
-    尺寸取 logo 点集在主轴/副轴上的投影范围 + pad：紧贴印刷区域，不伸到杯盖。"""
+    尺寸：logo 投影加宽松内边距，且四周与杯边保持安全距离，不碰杯（#28）。"""
     H, W = pm.shape[:2]
     # logo 中心点所在的产品连通体 = 这只杯子（整只，含真实倾斜）
     cx_i = int(np.clip(pts[:, 0, 0].mean(), 0, W - 1))
@@ -121,11 +121,55 @@ def strip_frame_from_product(pts, pm, pad=8):
     p = pts[:, 0, :].astype(np.float32)
     pv = p @ v
     pu = p @ u
-    len_v = float(pv.max() - pv.min() + 2 * pad)
-    len_u = float(pu.max() - pu.min() + 2 * pad)
-    mid_v = (pv.max() + pv.min()) / 2
-    mid_u = (pu.max() + pu.min()) / 2
+    # 条尺寸：logo 投影范围 + 宽松内边距，像一块嵌在杯身中央的面板
+    # （用户示例：条比 logo 宽大，四周与杯边都有明显边距，防错清单 #28）
+    pad_u = max(pad, 0.16 * (pu.max() - pu.min()))  # 细一点（用户示例 #28）
+    pad_v = max(pad, 0.10 * (pv.max() - pv.min()))
+    lo_u, hi_u = pu.min() - pad_u, pu.max() + pad_u
+    lo_v, hi_v = pv.min() - pad_v, pv.max() + pad_v
+    if comp is not None:
+        # 四周不许碰杯子边：杯身在主轴/副轴上的投影范围向内留安全边距，
+        # 条的区间与允许区间求交（宁可小一圈，绝不贴边/越界）
+        cp = cv2.findNonZero(comp)[:, 0, :].astype(np.float32)
+        cv_ = cp @ v
+        cu = cp @ u
+        mu = 0.12 * (cu.max() - cu.min())
+        mv = 0.10 * (cv_.max() - cv_.min())  # 上下离杯盖线/杯底线更远（用户示例 #28）
+        lo_u = max(lo_u, cu.min() + mu)
+        hi_u = min(hi_u, cu.max() - mu)
+        lo_v = max(lo_v, cv_.min() + mv)
+        hi_v = min(hi_v, cv_.max() - mv)
+    len_v = float(hi_v - lo_v)
+    len_u = float(hi_u - lo_u)
+    if len_v < 10 or len_u < 10:  # 安全边距把条挤没了，放弃面板模式
+        return None
+    mid_v = (hi_v + lo_v) / 2
+    mid_u = (hi_u + lo_u) / 2
     center = mid_v * v + mid_u * u
+    if comp is not None:
+        # 双保险：杯盖比杯身宽时，按杯身宽度算的边距可能仍越界——
+        # 逐角检查条是否在腐蚀后的杯身内，越界就整体缩 5% 重试
+        safe = cv2.erode(comp, np.ones((9, 9), np.uint8))
+        for _ in range(25):
+            corners = np.array([
+                center + (len_v / 2) * v + (len_u / 2) * u,
+                center + (len_v / 2) * v - (len_u / 2) * u,
+                center - (len_v / 2) * v + (len_u / 2) * u,
+                center - (len_v / 2) * v - (len_u / 2) * u])
+            ok = True
+            for px_, py_ in corners:
+                ix, iy = int(round(px_)), int(round(py_))
+                if not (0 <= ix < W and 0 <= iy < H and safe[iy, ix] > 0):
+                    ok = False
+                    break
+            if ok:
+                break
+            min_v = pv.max() - pv.min() + 8  # 再小也不能小于 logo 本身
+            min_u = pu.max() - pu.min() + 8
+            if len_v * 0.95 < min_v or len_u * 0.95 < min_u:
+                break
+            len_v *= 0.95
+            len_u *= 0.95
     rot = float(np.degrees(np.arctan2(v[0], -v[1])))  # 主轴偏离竖直的角度
     return (float(center[0]), float(center[1])), (len_u, len_v), rot
 
@@ -141,7 +185,7 @@ def draw_strip(img_bgr, pts, text="your logo here", pm=None, pad=10):
     rot = -rot  # warpAffine 旋转方向与 atan2 符号相反
     # 轴对齐圆角条蒙版（之后再旋转）
     base_mask = np.zeros((H, W), np.uint8)
-    r = max(6, int(min(sw, sh) // 5))
+    r = max(6, int(min(sw, sh) // 7))  # 圆角收紧，接近用户示例样式（#28）
     x0, y0 = int(round(cx - sw / 2)), int(round(cy - sh / 2))
     x1, y1 = int(round(cx + sw / 2)), int(round(cy + sh / 2))
     cv2.rectangle(base_mask, (x0 + r, y0), (x1 - r, y1), 255, -1)
